@@ -9,18 +9,33 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <signal.h>
 
 #define FD_SET_SIZE 1024
 
+static int nsec = 1;
+static int max_count = 10;
+static int counts[FD_SET_SIZE] = {0};
+static int dis_conn_fds[FD_SET_SIZE] = {0};
+static int fd_arr[FD_SET_SIZE];
+
+#define SHUT_FD(fd) do {\
+                        shutdown(fd, SHUT_RDWR);        \
+                        close(fd);                      \
+                        fd = -1;                        \
+                    }while(0)
+
 void str_srv(int listenfd);
 int max(int a, int b);
+void alrm_handler(int sig);
 
 int main(int argc, char **argv)
 {
     int listenfd;
     struct sockaddr_in srv_addr;
     if (argc != 2) {
-        fprintf(stderr, "usage: <listen-port>");
+        fprintf(stderr, "usage: <listen-port>\n");
+        exit(EXIT_FAILURE);
     }
     bzero(&srv_addr, sizeof(srv_addr));
     listenfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -33,6 +48,7 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
     listen(listenfd, 8);
+    signal(SIGALRM, alrm_handler);
     str_srv(listenfd);
     return 0;
 }
@@ -43,21 +59,41 @@ int max(int a, int b)
     return a > b ? a: b;
 }
 
+
+void alrm_handler(int sig) 
+{
+    int i;
+    for (i = 0;i < FD_SET_SIZE;i++) {
+        if (fd_arr[i] > 0) {
+            counts[i]++;
+            if (counts[i] >= max_count) {
+                dis_conn_fds[i] = -1;
+            }
+        }
+    }
+    alarm(nsec);
+}
+
+
+
 void str_srv(int listenfd)
 {
     fd_set readfds;
+    fd_set exceptfds;
     int nfds = listenfd + 1;
     int accept_fd;
     int fd_num = 1;
-    int fd_arr[FD_SET_SIZE];
+    //int fd_arr[FD_SET_SIZE];
     int n_ready = 0;
     int i = 0;
     ssize_t read_count = 0;
     ssize_t write_count = 0;
     ssize_t write_index = 0;
     char buf[1024];
+    char c = 0;
 
     FD_ZERO(&readfds);
+    FD_ZERO(&exceptfds);
     memset(fd_arr, -1, FD_SET_SIZE * sizeof(int));
     fd_arr[0] = listenfd;
     for(;;) {
@@ -65,18 +101,25 @@ void str_srv(int listenfd)
         for (i = 0;i < FD_SET_SIZE;i++) {
             if (fd_arr[i] >= 0) {
                 FD_SET(fd_arr[i], &readfds);
+                FD_SET(fd_arr[i], &exceptfds);
             }
         }
-        fprintf(stdout, "nfds:%d\n", nfds);
-        if ((n_ready = select(nfds, &readfds, NULL, NULL, NULL)) == -1) {
+        if ((n_ready = select(nfds, &readfds, NULL, &exceptfds, NULL)) == -1) {
             if (errno == EINTR) {
+                fprintf(stdout, "%s\n", "select return with EINTR");
+                for (i = 0;i < FD_SET_SIZE;i++) {
+                    if (dis_conn_fds[i] < 0) {
+                        fprintf(stdout, "close fd %d\n", fd_arr[i]);
+                        SHUT_FD(fd_arr[i]);
+                    }
+                }
                 continue;
             }else {
                 perror("select");
                 exit(EXIT_FAILURE);   
             }
         }
-        fprintf(stdout, "n_ready:%d\n", n_ready);
+        fprintf(stdout, "select return, n_ready:%d\n", n_ready);
         if (FD_ISSET(listenfd, &readfds)) {
             if ((accept_fd = accept(listenfd, NULL, NULL)) == -1) {
                 perror("accept");
@@ -86,6 +129,8 @@ void str_srv(int listenfd)
             for (i = 1;i < FD_SET_SIZE;i++) {
                 if (fd_arr[i] == -1) {
                     fd_arr[i] = accept_fd;
+                    counts[i] = 0;
+                    dis_conn_fds[i] = 0;
                     nfds = max(nfds, fd_arr[i]) + 1;
                     break;
                 }
@@ -95,24 +140,40 @@ void str_srv(int listenfd)
 
         while (n_ready > 0) {
             for (i = 1;i < FD_SET_SIZE;i++) {
+                if (fd_arr[i] > 0 && FD_ISSET(fd_arr[i], &exceptfds)) {
+                        if(recv(fd_arr[i], &c, 1, MSG_OOB) == -1) {
+                            if (errno != EWOULDBLOCK) {
+                                perror("recv");
+                                exit(EXIT_FAILURE);    
+                            }
+                            fprintf(stdout, "%s\n", "recv return with EWOULDBLOCK");
+                        }
+                        fprintf(stdout, "receive OOB data:%c\n", c);
+                        send(fd_arr[i], "1", 1, MSG_OOB);
+                        n_ready--;
+                }
                 if (fd_arr[i] > 0 && FD_ISSET(fd_arr[i], &readfds)) {
                     read_count = read(fd_arr[i], buf, 1024);
                     if (read_count == -1) {
-                        perror("read");
-                        exit(EXIT_FAILURE);
-                    }
-                    if (read_count == 0) {//receive FIN
-                        close(fd_arr[i]);
-                        fd_arr[i] = -1;
-                    }
-                    fprintf(stdout, "receive %d bytes from remote cli:%s\n", read_count, buf);
-                    write_index = 0;
-                    while (write_index != read_count) {
-                        if ((write_count = write(fd_arr[i], buf + write_index, read_count - write_index)) == -1) {
-                            perror("write");
+                        if (errno != ECONNRESET) {//经验证，当客户端/服务端加上处理OOB数据的功能后，当程序被kill时直接发送RST而不是FIN
+                            perror("read");
                             exit(EXIT_FAILURE);
                         }
-                        write_index += write_count;
+                        fprintf(stderr, "%s\n", "receive RST, close connection");
+                        SHUT_FD(fd_arr[i]);    
+                    } else if (read_count == 0) {//receive FIN
+                        fprintf(stdout, "%s\n", "revevie FIN, close connection");
+                        SHUT_FD(fd_arr[i]);
+                    } else {
+                        fprintf(stdout, "receive %ld bytes from remote cli:%s\n", read_count, buf);
+                        write_index = 0;
+                        while (write_index != read_count) {
+                            if ((write_count = write(fd_arr[i], buf + write_index, read_count - write_index)) == -1) {
+                                perror("write");
+                                exit(EXIT_FAILURE);
+                            }
+                            write_index += write_count;
+                        }
                     }
                     n_ready--;
                 }
@@ -121,4 +182,3 @@ void str_srv(int listenfd)
 
     }
 }
-
