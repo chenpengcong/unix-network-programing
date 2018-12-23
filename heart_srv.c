@@ -14,10 +14,10 @@
 #define FD_SET_SIZE 1024
 
 static int nsec = 1;
-static int max_count = 10;
-static int counts[FD_SET_SIZE] = {0};
-static int dis_conn_fds[FD_SET_SIZE] = {0};
-static int fd_arr[FD_SET_SIZE];
+static int max_count = 10;//持续10秒没有收到对端应答认为对端已不再存活
+static int counts[FD_SET_SIZE] = {0};//存放1024个计数器，counts[i]记录的是文件描述符fd_arr[i]的计数值
+static int dis_conn_fds[FD_SET_SIZE] = {0};//记录1024个文件描述符的状态，dis_conn_fds[i]的值为-1表示文件描述符fd_arr[i]已断开连接
+static int fd_arr[FD_SET_SIZE];//存放文件描述符
 
 #define SHUT_FD(fd) do {\
                         shutdown(fd, SHUT_RDWR);        \
@@ -48,7 +48,8 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
     listen(listenfd, 8);
-    signal(SIGALRM, alrm_handler);
+    set_signal(SIGALRM, alrm_handler);
+    alarm(nsec);
     str_srv(listenfd);
     return 0;
 }
@@ -63,10 +64,10 @@ int max(int a, int b)
 void alrm_handler(int sig) 
 {
     int i;
-    for (i = 0;i < FD_SET_SIZE;i++) {
+    for (i = 1;i < FD_SET_SIZE;i++) {
         if (fd_arr[i] > 0) {
             counts[i]++;
-            if (counts[i] >= max_count) {
+            if (counts[i] >= max_count) {//对端超过max_count次没有响应
                 dis_conn_fds[i] = -1;
             }
         }
@@ -107,10 +108,12 @@ void str_srv(int listenfd)
         if ((n_ready = select(nfds, &readfds, NULL, &exceptfds, NULL)) == -1) {
             if (errno == EINTR) {
                 fprintf(stdout, "%s\n", "select return with EINTR");
-                for (i = 0;i < FD_SET_SIZE;i++) {
+                //处理完alrm信号后select会返回，在此断开一些无效的连接
+                for (i = 1;i < FD_SET_SIZE;i++) {//索引从1开始是因为fd_arr[0]存放的是listenfd，不需要判断是否断开连接
                     if (dis_conn_fds[i] < 0) {
                         fprintf(stdout, "close fd %d\n", fd_arr[i]);
                         SHUT_FD(fd_arr[i]);
+                        fprintf(stderr, "fd_arr[%d]:%d\n", i, fd_arr[i]);
                         dis_conn_fds[i] = 0;
                     }
                 }
@@ -147,11 +150,12 @@ void str_srv(int listenfd)
                                 perror("recv");
                                 exit(EXIT_FAILURE);    
                             }
-                            fprintf(stdout, "%s\n", "recv return with EWOULDBLOCK");
+                            fprintf(stdout, "%s\n", "recv return with EWOULDBLOCK");//errno为EWOULDBLOCK表示OOB数据还未到达，但其实也是一次心跳应答
                         }
                         fprintf(stdout, "receive OOB data:%c\n", c);
                         send(fd_arr[i], "1", 1, MSG_OOB);
                         n_ready--;
+                        counts[i] = 0;//接收到OOB，心跳计数重置为0
                 }
                 if (fd_arr[i] > 0 && FD_ISSET(fd_arr[i], &readfds)) {
                     read_count = read(fd_arr[i], buf, 1024);

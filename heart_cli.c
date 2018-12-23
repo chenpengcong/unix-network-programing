@@ -50,7 +50,7 @@ int main(int argc, char **argv)
         perror("connect");
         exit(EXIT_FAILURE);
     }
-    heartbeat(1, 10);
+    heartbeat(1, 10);//持续10秒没有收到对端应答认为对端已不再存活
     str_cli(STDIN_FILENO, STDOUT_FILENO);
     return 0;
 }
@@ -135,7 +135,7 @@ void urg_handler(int sig)
 {
     char c;
     if(recv(connfd, &c, 1, MSG_OOB) == -1) {
-        if (errno != EWOULDBLOCK) {
+        if (errno != EWOULDBLOCK) {//errno为EWOULDBLOCK表示OOB数据还未到达，但其实也是一次心跳应答
             perror("recv");
             exit(EXIT_FAILURE);    
         }
@@ -150,6 +150,7 @@ void alrm_handler(int sig) {
     count++;
     fprintf(stdout, "%s\n", "alrm_handler");
     if (count > max_count) {
+        //服务端没响应
         fprintf(stderr, "%s\n", "server is unreachable");
         SHUT_CONN_FD;
         count = max_count + 1;
