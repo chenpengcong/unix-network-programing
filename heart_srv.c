@@ -28,7 +28,7 @@ static int fd_arr[FD_SET_SIZE];
 void str_srv(int listenfd);
 int max(int a, int b);
 void alrm_handler(int sig);
-
+void set_signal(int signo, void (*handler)(int));
 int main(int argc, char **argv)
 {
     int listenfd;
@@ -111,6 +111,7 @@ void str_srv(int listenfd)
                     if (dis_conn_fds[i] < 0) {
                         fprintf(stdout, "close fd %d\n", fd_arr[i]);
                         SHUT_FD(fd_arr[i]);
+                        dis_conn_fds[i] = 0;
                     }
                 }
                 continue;
@@ -129,9 +130,9 @@ void str_srv(int listenfd)
             for (i = 1;i < FD_SET_SIZE;i++) {
                 if (fd_arr[i] == -1) {
                     fd_arr[i] = accept_fd;
+                    nfds = max(nfds, fd_arr[i]) + 1;
                     counts[i] = 0;
                     dis_conn_fds[i] = 0;
-                    nfds = max(nfds, fd_arr[i]) + 1;
                     break;
                 }
             }
@@ -165,7 +166,7 @@ void str_srv(int listenfd)
                         fprintf(stdout, "%s\n", "revevie FIN, close connection");
                         SHUT_FD(fd_arr[i]);
                     } else {
-                        fprintf(stdout, "receive %ld bytes from remote cli:%s\n", read_count, buf);
+                        fprintf(stdout, "receive %zd bytes from remote cli:%s\n", read_count, buf);
                         write_index = 0;
                         while (write_index != read_count) {
                             if ((write_count = write(fd_arr[i], buf + write_index, read_count - write_index)) == -1) {
@@ -181,4 +182,13 @@ void str_srv(int listenfd)
         }
 
     }
+}
+
+void set_signal(int signo, void (*handler)(int))
+{
+    struct sigaction act;
+    sigemptyset(&act.sa_mask);
+    act.sa_handler = handler;
+    act.sa_flags = 0;
+    sigaction(signo, &act, NULL);
 }

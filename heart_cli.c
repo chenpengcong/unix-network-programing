@@ -24,10 +24,12 @@ static int max_count = 0;
 
 
 int max(int a, int b);
-void str_cli(int stdinfd, int stdoutfd, int connfd);
+void str_cli(int stdinfd, int stdoutfd);
 void heartbeat(int cnt, int max_cnt);
 void urg_handler(int sig);
 void alrm_handler(int sig);
+void set_signal(int signo, void (*handler)(int));
+
 
 int main(int argc, char **argv)
 {
@@ -49,7 +51,7 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
     heartbeat(1, 10);
-    str_cli(STDIN_FILENO, STDOUT_FILENO, connfd);
+    str_cli(STDIN_FILENO, STDOUT_FILENO);
     return 0;
 }
 
@@ -58,7 +60,7 @@ int max(int a, int b)
     return a > b ? a: b;
 }
 
-void str_cli(int stdinfd, int stdoutfd, int connfd) {
+void str_cli(int stdinfd, int stdoutfd) {
     int ndfs;
     ssize_t read_count = 0;
     ssize_t write_count = 0;
@@ -87,7 +89,7 @@ void str_cli(int stdinfd, int stdoutfd, int connfd) {
                 exit(EXIT_FAILURE);
             }
             write_index = 0;
-            fprintf(stdout, "recevie %d bytes from stdin\n", read_count);
+            fprintf(stdout, "recevie %zd bytes from stdin\n", read_count);
             if (connfd > 0) {
                 while (write_index != read_count) {
                     if ((write_count = write(connfd, buf + write_index, read_count - write_index)) == -1) {
@@ -102,7 +104,7 @@ void str_cli(int stdinfd, int stdoutfd, int connfd) {
 
         if (FD_ISSET(connfd, &readfds)) {
             read_count = read(connfd, buf, 1024);
-            fprintf(stdout, "recevie %d bytes from remote server\n", read_count);
+            fprintf(stdout, "recevie %zd bytes from remote server\n", read_count);
             if (read_count == -1) {
                 if (errno != ECONNRESET) {//经验证，当客户端/服务端加上处理OOB数据的功能后，当程序被kill时直接发送RST而不是FIN
                     perror("read");
@@ -146,22 +148,36 @@ void urg_handler(int sig)
 
 void alrm_handler(int sig) {
     count++;
+    fprintf(stdout, "%s\n", "alrm_handler");
     if (count > max_count) {
         fprintf(stderr, "%s\n", "server is unreachable");
         SHUT_CONN_FD;
         count = max_count + 1;
+        return;
+    } else {
+        send(connfd, "1", 1, MSG_OOB);
     }
-    fprintf(stdout, "%s\n", "alrm_handler");
-    send(connfd, "1", 1, MSG_OOB);
     alarm(nsec);
 }
 
 void heartbeat(int n, int max_cnt)
 {
+    struct sigaction act;
+
     nsec = n < 1 ? 1: n;
     max_count = max_cnt < n ? n: max_cnt;
+
     fcntl(connfd, F_SETOWN, getpid());
-    signal(SIGURG, urg_handler);
-    signal(SIGALRM, alrm_handler);
+    set_signal(SIGALRM, alrm_handler);
+    set_signal(SIGURG, urg_handler);
     alarm(nsec);
+}
+
+void set_signal(int signo, void (*handler)(int))
+{
+    struct sigaction act;
+    sigemptyset(&act.sa_mask);
+    act.sa_handler = handler;
+    act.sa_flags = 0;
+    sigaction(signo, &act, NULL);
 }
