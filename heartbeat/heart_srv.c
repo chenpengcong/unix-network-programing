@@ -67,7 +67,7 @@ void alrm_handler(int sig)
     for (i = 1;i < FD_SET_SIZE;i++) {
         if (fd_arr[i] > 0) {
             counts[i]++;
-            if (counts[i] >= max_count) {//对端超过max_count次没有响应
+            if (counts[i] >= max_count) {//对端连续超过max_count秒没有响应
                 dis_conn_fds[i] = -1;
             }
         }
