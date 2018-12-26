@@ -11,13 +11,11 @@
 #include <string.h>
 #include <signal.h>
 
-#define FD_SET_SIZE 1024
-
 static int nsec = 1;
 static int max_count = 10;//持续10秒没有收到对端应答认为对端已不再存活
-static int counts[FD_SET_SIZE] = {0};//存放1024个计数器，counts[i]记录的是文件描述符fd_arr[i]的计数值
-static int dis_conn_fds[FD_SET_SIZE] = {0};//记录1024个文件描述符的状态，dis_conn_fds[i]的值为-1表示文件描述符fd_arr[i]已断开连接
-static int fd_arr[FD_SET_SIZE];//存放文件描述符
+static int counts[FD_SETSIZE] = {0};//存放1024个计数器，counts[i]记录的是文件描述符fd_arr[i]的计数值
+static int dis_conn_fds[FD_SETSIZE] = {0};//记录1024个文件描述符的状态，dis_conn_fds[i]的值为-1表示文件描述符fd_arr[i]已断开连接
+static int fd_arr[FD_SETSIZE];//存放文件描述符
 
 #define SHUT_FD(fd) do {\
                         shutdown(fd, SHUT_RDWR);        \
@@ -64,7 +62,7 @@ int max(int a, int b)
 void alrm_handler(int sig) 
 {
     int i;
-    for (i = 1;i < FD_SET_SIZE;i++) {
+    for (i = 1;i < FD_SETSIZE;i++) {
         if (fd_arr[i] > 0) {
             counts[i]++;
             if (counts[i] >= max_count) {//对端连续超过max_count秒没有响应
@@ -84,7 +82,7 @@ void str_srv(int listenfd)
     int nfds = listenfd + 1;
     int accept_fd;
     int fd_num = 1;
-    //int fd_arr[FD_SET_SIZE];
+    //int fd_arr[FD_SETSIZE];
     int n_ready = 0;
     int i = 0;
     ssize_t read_count = 0;
@@ -95,11 +93,11 @@ void str_srv(int listenfd)
 
     FD_ZERO(&readfds);
     FD_ZERO(&exceptfds);
-    memset(fd_arr, -1, FD_SET_SIZE * sizeof(int));
+    memset(fd_arr, -1, FD_SETSIZE * sizeof(int));
     fd_arr[0] = listenfd;
     for(;;) {
         FD_ZERO(&readfds);
-        for (i = 0;i < FD_SET_SIZE;i++) {
+        for (i = 0;i < FD_SETSIZE;i++) {
             if (fd_arr[i] >= 0) {
                 FD_SET(fd_arr[i], &readfds);
                 FD_SET(fd_arr[i], &exceptfds);
@@ -109,7 +107,7 @@ void str_srv(int listenfd)
             if (errno == EINTR) {
                 fprintf(stdout, "%s\n", "select return with EINTR");
                 //处理完alrm信号后select会返回，在此断开一些无效的连接
-                for (i = 1;i < FD_SET_SIZE;i++) {//索引从1开始是因为fd_arr[0]存放的是listenfd，不需要判断是否断开连接
+                for (i = 1;i < FD_SETSIZE;i++) {//索引从1开始是因为fd_arr[0]存放的是listenfd，不需要判断是否断开连接
                     if (dis_conn_fds[i] < 0) {
                         fprintf(stdout, "close fd %d\n", fd_arr[i]);
                         SHUT_FD(fd_arr[i]);
@@ -130,7 +128,7 @@ void str_srv(int listenfd)
                 exit(EXIT_FAILURE);
             }
             fprintf(stdout, "accept a new connection, accept_fd:%d\n", accept_fd);
-            for (i = 1;i < FD_SET_SIZE;i++) {
+            for (i = 1;i < FD_SETSIZE;i++) {
                 if (fd_arr[i] == -1) {
                     fd_arr[i] = accept_fd;
                     nfds = max(nfds, fd_arr[i]) + 1;
@@ -143,7 +141,7 @@ void str_srv(int listenfd)
         }
 
         while (n_ready > 0) {
-            for (i = 1;i < FD_SET_SIZE;i++) {
+            for (i = 1;i < FD_SETSIZE;i++) {
                 if (fd_arr[i] > 0 && FD_ISSET(fd_arr[i], &exceptfds)) {
                         if(recv(fd_arr[i], &c, 1, MSG_OOB) == -1) {
                             if (errno != EWOULDBLOCK) {
