@@ -8,7 +8,7 @@
 
 **注意点**
 - 当关闭一个select正在监听的文件描述符，select函数是否会返回属于未定义行为，一开始我在考虑如何处理该问题，但发现heartbeat程序刚好是在信号处理函数中执行关闭文件描述符操作，而信号处理会导致阻塞的系统调用返回一个EINTR错误，那么执行关闭文件描述符后，select返回就变成了确定的行为，免去了很多问题
-- 当程序加上了处理OOB数据的功能后，如果直接kill程序，程序会给对端直接发送RST而不是FIN，有点奇怪，具体通过tcpdump抓取FIN和RST验证. `$ tcpdump -i <interface> "tcp[tcpflags] & (tcp-fin) != 0"`
+- 当程序加上了处理OOB数据的功能后，如果直接kill程序，程序会给对端直接发送RST而不是FIN，有点奇怪，具体通过tcpdump抓取FIN和RST验证. `$ tcpdump -i <interface> "tcp[tcpflags] & (tcp-fin|tcp-rst) != 0"`
 
 
 
