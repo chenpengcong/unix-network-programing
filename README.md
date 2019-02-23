@@ -12,3 +12,11 @@
 
 
 
+## httpdir
+
+一个简单的HTTP服务器，启动命令：`$ ./a.out <listenip> <listenport> <dir>`，启动后可以通过浏览器请求`http://<listenip>:<listenport>`来访问服务器上`<dir>`路径下的文件和目录
+
+注意点
+
+- 程序只解析出HTTP请求的[Request Line](https://tools.ietf.org/html/rfc7230#section-3.1.1)，因为只需要拿到其中的request-target
+
